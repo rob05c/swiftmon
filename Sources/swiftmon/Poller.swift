@@ -1,5 +1,5 @@
 import Foundation
-import FoundationNetworking
+//import FoundationNetworking
 
 enum PollErr : Error {
     case ParseErr(bits: Data)
@@ -41,8 +41,7 @@ func getAllHealth(pollResults: [(PollCache, PollObj)]) -> [PollCache: Bool] {
 }
 
 // TODO create session, don't use shared? Test performance? Timeouts etc?
-//func pollURL(urlStr: String, session: URLSession) async throws -> String {
-func pollURL(urlStr: String, session: URLSession) async throws -> PollObj {
+func pollURL(urlStr: String, session: URLSession) throws -> PollObj {
 
     let maybeURL = URL(string: urlStr)
 
@@ -50,14 +49,8 @@ func pollURL(urlStr: String, session: URLSession) async throws -> PollObj {
         throw PollErr.NilURL
     }
 
-//    let req = URLRequest(url: url)
-
-    /* let data: Data */
-    /* let response: URLResponse */
-    // _ is a URLResponse, with metadata about the resp
     // TODO catch and add context to exception
 
-    // TODO change to async when Linux has URLSession.shared.data
     var data: Data?
     var response: URLResponse?
     var error: Error?
@@ -79,19 +72,6 @@ func pollURL(urlStr: String, session: URLSession) async throws -> PollObj {
     guard error == nil else {
        throw PollErr.RespErr(details: error!)
     }
-    /* guard response = maybeResponse else { */
-    /*     throw PollErr.NilResp */
-    /* } */
-
-
-//    let (data, response) : (Data, URLResponse) = try await URLSession.shared.data(from: url)
-
-    /* let task = session.dataTask(with: url) { data, response, error in */
-    /*     if let err = error { */
-    /*         print("Client error! \(err)") */
-    /*         return */
-    /*     } */
-
 
     guard let resp = response as? HTTPURLResponse else {
         throw PollErr.NilResp
@@ -161,27 +141,45 @@ func pollURL(urlStr: String, session: URLSession) async throws -> PollObj {
 
 
 // pollCaches polls all URLs in parallel, waits for them all to finish, and returns the results
-func pollCaches(caches: [PollCache], session: URLSession) async throws -> [(PollCache, PollObj)] {
-//    var pollObjs: [String: [PollObj]] = [:]
+func pollCaches(caches: [PollCache], session: URLSession) throws -> [(PollCache, PollObj)] {
     var pollObjs: [(PollCache, PollObj)] = []
+    var errs: [String] = []
+    let lock: NSLock = NSLock() // change to read-write lock (pthread_wrlock_t)
 
      // TODO get and pass path and scheme from TO
     let path = "/products"
     let scheme = "http"
 
-    try await withThrowingTaskGroup(of: (PollCache, PollObj).self) { group in
-        for cache in caches {
-            group.async {
-                let url = scheme + "://" + cache.fqdn + path
-                return (cache, try await pollURL(urlStr: url, session: session))
-            }
-        }
-        for try await (cache, obj) in group {
-            pollObjs.append( (cache, obj) )
-            print("got a url")
-        }
-        print("got all urls")
+    let queue = DispatchQueue(label: "com.mytask", attributes: .concurrent)
+
+    let group = DispatchGroup()
+    for cache in caches {
+        group.enter()
     }
+
+    for cache in caches {
+        queue.async {
+            defer {
+                group.leave()
+            }
+
+            var pollResult: PollObj = PollObj()
+            do {
+                let url = scheme + "://" + cache.fqdn + path
+                pollResult = try pollURL(urlStr: url, session: session)
+            } catch {
+                lock.lock()
+                errs.append("poll cache '\(cache.name)' error: \(error.localizedDescription)")
+                lock.unlock()
+                return
+            }
+            lock.lock()
+            pollObjs.append( (cache, pollResult) )
+            lock.unlock()
+        }
+    }
+
+    group.wait()
     return pollObjs
 }
 
@@ -200,68 +198,32 @@ struct CacheHealth: Decodable {
     let updated_at: String
 }
 
-func pollAsync(healthData: HealthData) async {
+func poll(healthData: HealthData) {
     let cachesToPoll = getCachesToPoll()
 
     var pollResults: [(PollCache, PollObj)] = []
 
     do {
-        try await withThrowingTaskGroup(of: [(PollCache, PollObj)].self) { group in
-            group.async {
-                return try await pollCaches(caches: cachesToPoll, session: session)
-            }
-
-            for try await cacheObjArray in group {
-              pollResults = cacheObjArray
-            }
-        }
-   } catch {
-     print("poll error: \(error.localizedDescription)")
-     return
-//       throw PollErr.ParseErr(error.localizedDescription)
-   }
-
-  print("got pollResults: \(pollResults)")
-
-/*   async { */
-/* //    var resp: [String: [PollObj]] */
-/*     do { */
-
-/*       pollResults = try await pollCaches(caches: cachesToPoll, session: session) */
-
-/*     } catch { */
-/*         print("poll error: \(error.localizedDescription)") */
-/*         exit(-2) // TODO propogate and log err, don't crash */
-/*     } */
-
-/*     // print("poll got: '''\(resp)'''") */
-/*     group.leave() */
-/*   } */
-/*   group.wait() */
-
-  // TODO this polls all caches, then sums all their health.
-  //      change to sum as we get health, for efficiency.
-
-  let allHealth = getAllHealth(pollResults: pollResults)
-
-  print("got allHealth: \(allHealth)")
-
-  healthData.lock.lock()
-  for (_, cacheHealth) in allHealth.enumerated() {
-    healthData.cacheHealth[cacheHealth.key.name] = cacheHealth.value
-  }
-  healthData.lock.unlock()
-}
-
-func poll(healthData: HealthData) {
-    let group = DispatchGroup()
-    group.enter()
-
-    async {
-        await pollAsync(healthData: healthData)
-        group.leave()
+        pollResults = try pollCaches(caches: cachesToPoll, session: session)
+    } catch {
+        print("poll error: \(error.localizedDescription)")
+        return
     }
-    group.wait()
+
+    print("got pollResults: \(pollResults)")
+
+    // TODO this polls all caches, then sums all their health.
+    //      change to sum as we get health, for efficiency.
+
+    let allHealth = getAllHealth(pollResults: pollResults)
+
+    print("got allHealth: \(allHealth)")
+
+    healthData.lock.lock()
+    for (_, cacheHealth) in allHealth.enumerated() {
+      healthData.cacheHealth[cacheHealth.key.name] = cacheHealth.value
+    }
+    healthData.lock.unlock()
 }
 
 struct PollCache: Hashable {

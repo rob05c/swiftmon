@@ -25,31 +25,7 @@ let urlStrs = [
 
 let session = URLSession.shared
 
-
-/* func doPoll() { */
-/*   let group = DispatchGroup() */
-/*   group.enter() */
-
-/*   async { */
-/* //    var resp: [String: [PollObj]] */
-/*     var resp: [(String, [PollObj])] */
-/*     do { */
-
-/*       resp = try await pollURLs(urls: urlStrs, session: session) */
-
-/*     } catch { */
-/*         print("poll error: \(error.localizedDescription)") */
-/*         exit(-2) */
-/*     } */
-
-/*     print("poll got: '''\(resp)'''") */
-/*     group.leave() */
-/*   } */
-/*   group.wait() */
-
-/* } */
-
-func doPoll2() {
+func doPoll() {
     let healthData = HealthData()
 
     poll(healthData: healthData)
@@ -73,11 +49,9 @@ func doPoll2() {
     print("healthData: \(jsonString)")
 }
 
-doPoll2()
+doPoll()
 
 //Thread.sleep(forTimeInterval: 300)
-
-
 
 
 //let url = URL(string: urlStr)!
