@@ -6,7 +6,6 @@ import FoundationNetworking
 
 let foo = 42
 
-
 print(String(format: "Hallo, Welt! foo is %d", foo))
 
 if CommandLine.arguments.count != 2 {
@@ -17,11 +16,7 @@ if CommandLine.arguments.count != 2 {
 let name = CommandLine.arguments[1]
 sayHello(name: name)
 
-let urlStrs = [
-    "https://www.testjsonapi.com/products",
-    "https://www.testjsonapi.com/products",
-    "https://www.testjsonapi.com/products",
-]
+let crConfigFileName = "./crc.json"
 
 let session = URLSession.shared
 
@@ -49,9 +44,14 @@ func doPoll() {
     print("healthData: \(jsonString)")
 }
 
+let crConfigPollQueue = DispatchQueue(label: "com.mytask", attributes: .concurrent)
+let crConfigPollIntervalSeconds: DispatchTimeInterval = DispatchTimeInterval.seconds(5)
+pollCRConfig(fileName: crConfigFileName, queue: crConfigPollQueue, interval: crConfigPollIntervalSeconds)
+
 doPoll()
 
-//Thread.sleep(forTimeInterval: 300)
+// TODO change to poll for config file changes, or sleep forever, or something
+Thread.sleep(forTimeInterval: 300)
 
 
 //let url = URL(string: urlStr)!
