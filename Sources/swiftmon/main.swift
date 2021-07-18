@@ -18,7 +18,13 @@ sayHello(name: name)
 
 let crConfigFileName = "./crc.json"
 
-let session = URLSession.shared
+//let session = URLSession.shared
+
+// TODO make configurable
+let sessionConfig = URLSessionConfiguration.default
+sessionConfig.timeoutIntervalForRequest = 2.0
+sessionConfig.timeoutIntervalForResource = 5.0
+let session = URLSession(configuration: sessionConfig)
 
 func doPoll() {
     let healthData = HealthData()
@@ -44,7 +50,7 @@ func doPoll() {
     print("healthData: \(jsonString)")
 }
 
-let crConfigPollQueue = DispatchQueue(label: "com.mytask", attributes: .concurrent)
+let crConfigPollQueue = DispatchQueue(label: "com.swiftmon.crconfig-poll-queue", attributes: .concurrent)
 let crConfigPollIntervalSeconds: DispatchTimeInterval = DispatchTimeInterval.seconds(5)
 pollCRConfig(fileName: crConfigFileName, queue: crConfigPollQueue, interval: crConfigPollIntervalSeconds)
 
