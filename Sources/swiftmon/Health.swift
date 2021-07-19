@@ -1,5 +1,21 @@
 import Foundation
 
+class HealthData {
+  var cacheHealth: [String: Bool] = [:]
+  var lock: NSLock = NSLock() // change to read-write lock (pthread_wrlock_t)
+}
+
+let healthData = HealthData()
+
+func getCacheHealth() -> [String: Bool] {
+    healthData.lock.lock()
+    defer {
+        healthData.lock.unlock()
+    }
+    let healthDataCopyPtr = healthData.cacheHealth // TODO necessary?
+    return healthDataCopyPtr
+}
+
 func getAllHealth(pollResults: [(PollCache, PollResult)]) -> [PollCache: Bool] {
   var allHealth: [PollCache: Bool] = [:]
   for cacheObj in pollResults {

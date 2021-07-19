@@ -243,11 +243,6 @@ func pollCaches(caches: [PollCache], session: URLSession) throws -> [(PollCache,
     return pollObjs
 }
 
-class HealthData {
-  var cacheHealth: [String: Bool] = [:]
-  var lock: NSLock = NSLock() // change to read-write lock (pthread_wrlock_t)
-}
-
 struct CacheHealth: Decodable {
     let system: CacheHealthSystem
 }
