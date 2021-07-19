@@ -78,6 +78,12 @@ extension PollErr: LocalizedError {
     }
 }
 
+enum IPType: String, Codable {
+  case v4 = "v4"
+  case v6 = "v6"
+}
+
+
 enum PollResult {
     case success(PollObj)
     case error(String)
@@ -193,8 +199,8 @@ func pollURL(urlStr: String, session: URLSession) throws -> PollObj {
 }
 
 // pollCaches polls all URLs in parallel, waits for them all to finish, and returns the results
-func pollCaches(caches: [PollCache], session: URLSession) throws -> [(PollCache, PollResult)] {
-    var pollObjs: [(PollCache, PollResult)] = []
+func pollCaches(caches: [PollCache], session: URLSession) throws -> [(PollCache, IPType, PollResult)] {
+    var pollObjs: [(PollCache, IPType, PollResult)] = []
     let lock: NSLock = NSLock() // change to read-write lock (pthread_wrlock_t)
 
      // TODO get and pass path and scheme from TO
@@ -204,34 +210,68 @@ func pollCaches(caches: [PollCache], session: URLSession) throws -> [(PollCache,
     let group = DispatchGroup()
     for cache in caches {
         group.enter()
+        if cache.ipv6 != nil {
+            group.enter()
+        }
     }
 
     for cache in caches {
+        // TODO read monitoring.json param for path
+        let path = "/_astats?application=system&inf.name=" + cache.interface
+        let scheme = "http"
+
+        queue.async {
+            defer {
+                group.leave()
+            }
+            let url = scheme + "://" + cache.ipv4 + path
+            do {
+                print("polling '\(url)'")
+                let pollResult = try pollURL(urlStr: url, session: session)
+
+                lock.lock()
+                pollObjs.append( (cache, IPType.v4, PollResult.success(pollResult)) )
+                lock.unlock()
+
+                print("polled '\(url)': success")
+            } catch {
+                let errStr = "poll cache '\(cache.name)' v4 error: \(error.localizedDescription)"
+                print("error polling '\(url)': \(errStr)")
+                lock.lock()
+                pollObjs.append( (cache, IPType.v4, PollResult.error(errStr)) )
+                lock.unlock()
+            }
+        }
+
+        // TODO remove duplication with v4
+        if cache.ipv6 == nil {
+            continue
+        }
         queue.async {
             defer {
                 group.leave()
             }
 
-            // TODO read monitoring.json param for path
-            let path = "/_astats?application=system&inf.name=" + cache.interface
-            let scheme = "http"
-
-            var pollResult: PollObj
-            let url = scheme + "://" + cache.fqdn + path
+            var v6Str = cache.ipv6!
+            // if the v6 addr is a CIDR, remove the range
+            if let dotRange = v6Str.range(of: "/") {
+                v6Str.removeSubrange(dotRange.lowerBound..<v6Str.endIndex)
+            }
+            let url = scheme + "://" + "[" + v6Str + "]" + path
             do {
                 print("polling '\(url)'")
-                pollResult = try pollURL(urlStr: url, session: session)
+                let pollResult = try pollURL(urlStr: url, session: session)
 
                 lock.lock()
-                pollObjs.append( (cache, PollResult.success(pollResult)) )
+                pollObjs.append( (cache, IPType.v6, PollResult.success(pollResult)) )
                 lock.unlock()
 
                 print("polled '\(url)': success")
             } catch {
-                let errStr = "poll cache '\(cache.name)' error: \(error.localizedDescription)"
+                let errStr = "poll cache '\(cache.name)' v6 error: \(error.localizedDescription)"
                 print("error polling '\(url)': \(errStr)")
                 lock.lock()
-                pollObjs.append( (cache, PollResult.error(errStr)) )
+                pollObjs.append( (cache, IPType.v6, PollResult.error(errStr)) )
                 lock.unlock()
             }
         }
@@ -261,7 +301,7 @@ struct CacheHealthSystem: Decodable {
 func poll(healthData: HealthData) {
     let cachesToPoll = getCachesToPoll()
 
-    var pollResults: [(PollCache, PollResult)] = []
+    var pollResults: [(PollCache, IPType, PollResult)] = []
 
     do {
         pollResults = try pollCaches(caches: cachesToPoll, session: session)
@@ -282,7 +322,7 @@ func poll(healthData: HealthData) {
     healthData.lock.lock()
     print("locked healthData")
     for (_, cacheHealth) in allHealth.enumerated() {
-      healthData.cacheHealth[cacheHealth.key.name] = cacheHealth.value
+        healthData.cacheHealth[cacheHealth.key.name] = cacheHealth.value
     }
     healthData.lock.unlock()
     print("unlocked healthData")
@@ -294,9 +334,12 @@ func poll(healthData: HealthData) {
 struct PollCache: Hashable {
     let name: String
     let fqdn: String
+    let ipv4: String
+    let ipv6: String?
     let interface: String
 
     static func == (lhs: PollCache, rhs: PollCache) -> Bool {
+        // TODO add port(s)?
         return lhs.fqdn == rhs.fqdn
     }
 }
@@ -331,7 +374,13 @@ func getCachesToPoll() -> [PollCache] {
 }
 
 func crcToPollCache(name: String, server: CRConfigServer) -> PollCache {
-    return PollCache(name: name, fqdn: server.fqdn, interface: server.interfaceName)
+return PollCache(
+    name: name,
+    fqdn: server.fqdn,
+    ipv4: server.ip,
+    ipv6: server.ip6,
+    interface: server.interfaceName
+)
 }
 
 func typeIsCache(typeStr: String) -> Bool {
@@ -344,19 +393,4 @@ func statusIsMonitored(statusStr: String) -> Bool {
     return statusStr == "ONLINE" ||
         statusStr != "REPORTED" ||
         statusStr != "ADMIN_DOWN" // we still monitor down caches; just not offline
-}
-
-func getCachesToPollDebug() -> [PollCache] {
-    var caches: [PollCache] = []
-
-    let cache0 = PollCache(name: "my-cache-0", fqdn: "www.testjsonapi.com", interface: "foo")
-    caches.append(cache0)
-
-    let cache1 = PollCache(name: "my-cache-1", fqdn: "www.testjsonapi.com", interface: "foo")
-    caches.append(cache1)
-
-    let cache2 = PollCache(name: "my-cache-2", fqdn: "www.testjsonapi.com", interface: "foo")
-    caches.append(cache2)
-
-    return caches
 }

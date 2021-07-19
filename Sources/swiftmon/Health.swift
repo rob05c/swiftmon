@@ -1,13 +1,13 @@
 import Foundation
 
 class HealthData {
-  var cacheHealth: [String: Bool] = [:]
+  var cacheHealth: [String: [IPType: Bool]] = [:]
   var lock: NSLock = NSLock() // change to read-write lock (pthread_wrlock_t)
 }
 
 let healthData = HealthData()
 
-func getCacheHealth() -> [String: Bool] {
+func getCacheHealth() -> [String: [IPType: Bool]] {
     healthData.lock.lock()
     defer {
         healthData.lock.unlock()
@@ -16,17 +16,20 @@ func getCacheHealth() -> [String: Bool] {
     return healthDataCopyPtr
 }
 
-func getAllHealth(pollResults: [(PollCache, PollResult)]) -> [PollCache: Bool] {
-  var allHealth: [PollCache: Bool] = [:]
+func getAllHealth(pollResults: [(PollCache, IPType, PollResult)]) -> [PollCache: [IPType: Bool]] {
+  var allHealth: [PollCache: [IPType: Bool]] = [:]
   for cacheObj in pollResults {
     let pollCache = cacheObj.0
-    let pollResult = cacheObj.1
-    allHealth[cacheObj.0] = getHealth(cacheName: pollCache.name, obj: pollResult)
+    let ipType = cacheObj.1
+    let pollResult = cacheObj.2
+    var cacheHealth: [IPType: Bool] = allHealth[pollCache] ?? [:]
+    cacheHealth[ipType] = getHealth(cacheName: pollCache.name, obj: pollResult)
+    allHealth[pollCache] = cacheHealth // TODO necessary?
   }
   return allHealth
 }
 
-func getHealth(cacheName: String, obj: PollResult) -> Bool {
+func getHealth(cacheName: String, obj: PollResult) -> (Bool) {
     // TODO change to take threshold data, when we have that from TO
     switch obj {
     case .error(let errStr):
